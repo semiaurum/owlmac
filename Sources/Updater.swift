@@ -65,7 +65,7 @@ final class Updater {
 
     /// The newest release seen that is newer than the running app. Shown at the top of the menu.
     private(set) var available: Release?
-    /// Called when an automatic check finds a version that was not offered before.
+    /// Called each time an automatic check finds a newer version. The app decides whether to ask or install.
     var onAutoFound: (@MainActor (Release) -> Void)?
 
     nonisolated init() {
@@ -84,6 +84,12 @@ final class Updater {
             defaults.set(newValue, forKey: "autoUpdateCheck")
             scheduleAutoCheck()
         }
+    }
+
+    /// Install a found release without asking, as long as nothing is being kept awake.
+    var autoInstall: Bool {
+        get { defaults.bool(forKey: "autoUpdateInstall") }
+        set { defaults.set(newValue, forKey: "autoUpdateInstall") }
     }
 
     // MARK: Scheduling
@@ -108,9 +114,7 @@ final class Updater {
     }
 
     private func runAutoCheck() async {
-        guard let outcome = try? await check(), case .newer(let release) = outcome,
-              defaults.string(forKey: "offeredUpdateVersion") != release.version.text else { return }
-        defaults.set(release.version.text, forKey: "offeredUpdateVersion")
+        guard let outcome = try? await check(), case .newer(let release) = outcome else { return }
         onAutoFound?(release)
     }
 

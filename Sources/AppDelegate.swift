@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        defaults.register(defaults: ["autoDetect": true, "autoUpdateCheck": true])
+        defaults.register(defaults: ["autoDetect": true, "autoUpdateCheck": true, "autoUpdateInstall": true])
 
         // A menu attached to the status item opens on left and right click alike, like other menu bar apps.
         menu.delegate = self
@@ -63,9 +63,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if autoDetect { watcher.start() }
 
         MainActor.assumeIsolated {  // AppKit calls this on the main thread; Updater is main-actor isolated
-            updater.onAutoFound = { [weak self] release in self?.promptUpdate(release) }
+            updater.onAutoFound = { [weak self] release in self?.handleAutoFound(release) }
             updater.scheduleAutoCheck()
         }
+        announceUpdateIfJustInstalled()
 
         lidOn = LidGuard.isEnabled
         refresh()
@@ -211,6 +212,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updater.autoCheck.toggle()
     }
 
+    @MainActor @objc private func toggleAutoUpdateInstall() {
+        updater.autoInstall.toggle()
+        installPendingUpdateIfAllowed()
+    }
+
+    /// Automatic check found a newer version. With auto-install on, swap now if nothing is kept awake,
+    /// otherwise wait for the owl to fall asleep (see refresh). With it off, ask once per version.
+    @MainActor private func handleAutoFound(_ release: Updater.Release) {
+        if updater.autoInstall {
+            installPendingUpdateIfAllowed()
+            return
+        }
+        guard defaults.string(forKey: "offeredUpdateVersion") != release.version.text else { return }
+        defaults.set(release.version.text, forKey: "offeredUpdateVersion")
+        promptUpdate(release)
+    }
+
+    private func installPendingUpdateIfAllowed() {
+        guard !isAwake else { return }
+        MainActor.assumeIsolated {
+            guard updater.autoInstall, let release = updater.available else { return }
+            startUpdate(release)
+        }
+    }
+
+    /// Shows what happened after an update swapped the app and relaunched it.
+    private func announceUpdateIfJustInstalled() {
+        guard let from = defaults.string(forKey: "updatedFromVersion") else { return }
+        defaults.removeObject(forKey: "updatedFromVersion")
+        guard let now = Updater.currentVersion?.text, now != from else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            self?.notice("v\(now)으로 업데이트했어요", "v\(from)에서 올라왔어요. 설정은 그대로예요.")
+        }
+    }
+
     @MainActor private func promptUpdate(_ release: Updater.Release) {
         let alert = NSAlert()
         alert.messageText = "새 버전 v\(release.version)이 있어요"
@@ -234,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Task {
             do {
                 try await updater.install(release)
+                defaults.set(Updater.currentVersion?.text, forKey: "updatedFromVersion")
                 NSApp.terminate(nil)  // the swap script waits for this process to exit, then relaunches
             } catch {
                 notice("업데이트하지 못했어요",
@@ -265,6 +303,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             show(awake ? .awake : (autoDetect ? .watching : .asleep))
         }
+        if wasAwake && !awake { installPendingUpdateIfAllowed() }  // the owl just went to sleep: safe to swap the app
         wasAwake = awake
 
         scheduleBlink()
@@ -408,6 +447,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let autoUpdate = item("업데이트 자동 확인", #selector(toggleAutoUpdateCheck))
         autoUpdate.state = MainActor.assumeIsolated({ updater.autoCheck }) ? .on : .off
         menu.addItem(autoUpdate)
+        let autoInstall = item("업데이트 자동 설치", #selector(toggleAutoUpdateInstall))
+        autoInstall.state = MainActor.assumeIsolated({ updater.autoInstall }) ? .on : .off
+        autoInstall.toolTip = "새 버전이 있으면 부엉이가 자는 동안 알아서 바꾸고 다시 실행해요"
+        menu.addItem(autoInstall)
         menu.addItem(item("업데이트 확인…", #selector(checkForUpdates)))
         menu.addItem(NSMenuItem(title: "OwlMac 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
