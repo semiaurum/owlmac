@@ -112,3 +112,7 @@ Sources/
   LidGuard.swift        pmset disablesleep
   Updater.swift         GitHub 릴리스 확인, 새 버전 내려받아 교체
 ```
+
+## 라이선스
+
+코드, 문서, 부엉이 아이콘과 이미지를 포함한 이 프로젝트는 [MIT 라이선스](LICENSE)로 배포해요.

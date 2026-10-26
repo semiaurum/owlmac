@@ -23,6 +23,7 @@ echo "→ drawing app icon"
 iconutil -c icns build/OwlMac.iconset -o "$APP/Contents/Resources/OwlMac.icns"
 
 # Ad-hoc signature: required to run on Apple silicon. Not notarized.
+cp LICENSE "$APP/Contents/Resources/LICENSE"
 codesign --force --sign - "$APP"
 
 rm -f dist/OwlMac.zip
